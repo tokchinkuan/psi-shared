@@ -1,0 +1,9 @@
+{
+  "name": "@psi/shared",
+  "version": "1.0.0",
+  "exports": {
+    "./constants": "./constants.js",
+    "./scoring": "./scoring.js",
+    "./utils": "./utils.js"
+  }
+}
