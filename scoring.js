@@ -129,7 +129,16 @@ const getBasePointsForRank = (rank) => {
 //   Action = ln(1 + Σ min(f, fcap)·u)      f=stake/startBal, u=4p(1-p), p=1/odd
 //   Skill  = bandNorm(Σ f·CLV) · N/(N+N0)  CLV=1/close − 1/taken (band-debiased)
 //   Profit = tanh(ROI / roiScale)          ROI=(end−start)/start, softcapped
-//   composite = wA·z(Action) + wP·z(Profit) + wK·z(Skill)
+//   survival = clamp(end/start, 0, 1)      fraction of bankroll preserved
+//   upside   = wA·z(Action) + wK·z(Skill)
+//   composite = (upside > 0 ? survival·upside : upside) + wP·z(Profit)
+// Survival gate: Action and Skill are unbounded above and reward volume/CLV, but
+// that credit is only real if the bankroll survives the week. The gate scales
+// DOWN positive Action/Skill upside by the fraction of bankroll preserved, so a
+// bust (end→0) keeps ~none of its manufactured action/CLV and collapses to the
+// Profit axis — it can no longer top the week. Only positive upside is gated:
+// surviving is never penalized, and a non-bettor (upside ≈ 0/negative) gets no
+// free lift, so the gate fixes the bust exploit without rewarding inaction.
 const SCORING_DEFAULTS = {
   wA: 1,
   wP: 1,
@@ -138,6 +147,7 @@ const SCORING_DEFAULTS = {
   fcap: 0.25,
   roiScale: 1.0,
   bandWidth: 0.1,
+  survivalGate: true,
 };
 
 const softcapRoi = (roi, scale = SCORING_DEFAULTS.roiScale) =>
@@ -242,8 +252,17 @@ const scoreWeek = (participants, closingByMatch, opts = {}) => {
   zscoreField(rows, "action");
   zscoreField(rows, "softRoi");
   zscoreField(rows, "skill");
-  for (const r of rows)
-    r.composite = o.wA * r.z_action + o.wP * r.z_softRoi + o.wK * r.z_skill;
+  for (const r of rows) {
+    const upside = o.wA * r.z_action + o.wK * r.z_skill;
+    // Fraction of bankroll preserved (1 = ended flat-or-up, 0 = busted out).
+    r.survival = o.survivalGate
+      ? Math.max(0, Math.min(1, (r.endBal ?? 0) / (r.startBal || 1000)))
+      : 1;
+    // Gate positive upside only: busting strips manufactured action/CLV credit,
+    // surviving is never penalized, and a non-bettor gets no lift toward zero.
+    const gatedUpside = upside > 0 ? r.survival * upside : upside;
+    r.composite = gatedUpside + o.wP * r.z_softRoi;
+  }
 
   const byComp = [...rows].sort((a, b) => b.composite - a.composite);
   byComp.forEach((r, i) => (r.weekRank = i + 1));
