@@ -17,10 +17,18 @@ const getBetResult = (bet) => {
   const hasTied = validLegs.every((leg) => leg.status === "tie");
   if (hasTied) return "tie";
 
-  const hasLost = validLegs.some((leg) => leg.status === "lost");
+  // A tie leg is a PUSH, not a blocker. getOverallOddValue already drops tie
+  // legs from the payout (they are worth 1.0), so they must not decide the
+  // outcome either. Leaving them in the check made "every leg won" false for
+  // any winning parlay containing a push, so it fell through to "pending" and
+  // could never settle — while an otherwise identical parlay with a losing leg
+  // settled fine. The bug therefore only ever struck bets that had won.
+  const decidingLegs = validLegs.filter((leg) => leg.status !== "tie");
+
+  const hasLost = decidingLegs.some((leg) => leg.status === "lost");
   if (hasLost) return "lost";
 
-  const hasWon = validLegs.every((leg) => leg.status === "won");
+  const hasWon = decidingLegs.every((leg) => leg.status === "won");
   if (hasWon) return "won";
 
   return "pending";
